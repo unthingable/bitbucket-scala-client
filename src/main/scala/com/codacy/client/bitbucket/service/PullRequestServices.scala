@@ -1,7 +1,7 @@
 package com.codacy.client.bitbucket.service
 
 import com.codacy.client.bitbucket.client.{BitbucketClient, Request, RequestResponse}
-import com.codacy.client.bitbucket.{Commit, PullRequest}
+import com.codacy.client.bitbucket.{PullRequestApproval, Commit, PullRequest}
 import play.api.libs.json.{JsNull, JsObject, Json}
 
 class PullRequestServices(client: BitbucketClient) {
@@ -48,9 +48,9 @@ class PullRequestServices(client: BitbucketClient) {
     client.post(Request(url, classOf[JsObject]), payload)
   }
 
-  def postApprove(owner: String, repository: String, prId: Long): RequestResponse[JsObject] = {
+  def postApprove(owner: String, repository: String, prId: Long): RequestResponse[PullRequestApproval] = {
     val url = s"https://bitbucket.org/!api/2.0/repositories/$owner/$repository/pullrequests/$prId/approve"
-    client.post(Request(url, classOf[JsObject]), JsNull)
+    client.post(Request(url, classOf[PullRequestApproval]), JsNull)
   }
 
   def deleteApprove(owner: String, repository: String, prId: Long): RequestResponse[Boolean] = {
@@ -58,14 +58,14 @@ class PullRequestServices(client: BitbucketClient) {
     client.delete(url)
   }
 
-  def merge(owner: String, repository: String, prId: Long): RequestResponse[JsObject] = {
+  def merge(owner: String, repository: String, prId: Long): RequestResponse[PullRequest] = {
     val url = s"https://bitbucket.org/!api/2.0/repositories/$owner/$repository/pullrequests/$prId/merge"
-    client.post(Request(url, classOf[JsObject]), JsNull)
+    client.post(Request(url, classOf[PullRequest]), JsNull)
   }
 
-  def decline(owner: String, repository: String, prId: Long): RequestResponse[JsObject] = {
+  def decline(owner: String, repository: String, prId: Long): RequestResponse[PullRequest] = {
     val url = s"https://bitbucket.org/!api/2.0/repositories/$owner/$repository/pullrequests/$prId/decline"
-    client.post(Request(url, classOf[JsObject]), JsNull)
+    client.post(Request(url, classOf[PullRequest]), JsNull)
   }
 
 }

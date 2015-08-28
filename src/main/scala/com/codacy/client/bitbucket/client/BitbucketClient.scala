@@ -1,25 +1,15 @@
 package com.codacy.client.bitbucket.client
 
-import java.util.concurrent.{SynchronousQueue, ThreadPoolExecutor, TimeUnit}
-
 import com.codacy.client.bitbucket.util.HTTPStatusCodes
-import com.ning.http.client.AsyncHttpClientConfig
 import play.api.libs.json.{JsValue, Json, Reads}
-import play.api.libs.oauth._
-import play.api.libs.ws.DefaultWSClientConfig
-import play.api.libs.ws.ning.{NingAsyncHttpClientConfigBuilder, NingWSClient}
 
-import scala.concurrent.Await
-import scala.concurrent.duration.{Duration, SECONDS}
 import scala.util.{Failure, Properties, Success, Try}
+import scalaj.http.{Http, HttpRequest, Token}
 
 class BitbucketClient(key: String, secretKey: String, token: String, secretToken: String) {
 
-  private lazy val KEY = ConsumerKey(key, secretKey)
-  private lazy val TOKEN = RequestToken(token, secretToken)
-
-  private lazy val requestTimeout = Duration(10, SECONDS)
-  private lazy val requestSigner = OAuthCalculator(KEY, TOKEN)
+  private lazy val KEY = Token(key, secretKey)
+  private lazy val TOKEN = Token(token, secretToken)
 
   /*
    * Does an API request and parses the json output into a class
@@ -54,17 +44,11 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
   /*
    * Does an API post
    */
-  def post[T](request: Request[T], values: JsValue)(implicit reader: Reads[T]): RequestResponse[T] = withClientRequest { client =>
-    val jpromise = client.url(request.url)
-      .sign(requestSigner)
-      .withFollowRedirects(follow = true)
-      .post(values)
-    val result = Await.result(jpromise, requestTimeout)
+  def post[T](request: Request[T], values: JsValue)(implicit reader: Reads[T]): RequestResponse[T] = withClientRequest(request.url) { client =>
+    val response = client.postData(values.toString()).asString
 
-    val value = if (Seq(HTTPStatusCodes.OK, HTTPStatusCodes.CREATED).contains(result.status)) {
-      val body = result.body
-
-      val jsValue = parseJson(body)
+    val value = if (Seq(HTTPStatusCodes.OK, HTTPStatusCodes.CREATED).contains(response.code)) {
+      val jsValue = parseJson(response.body)
       jsValue match {
         case Right(responseObj) =>
           RequestResponse(responseObj.asOpt[T])
@@ -72,41 +56,32 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
           RequestResponse[T](None, message = message.detail, hasError = true)
       }
     } else {
-      RequestResponse[T](None, result.statusText, hasError = true)
+      RequestResponse[T](None, response.statusLine, hasError = true)
     }
 
     value
   }
 
   /* copy paste from post ... */
-  def delete[T](url: String): RequestResponse[Boolean] = withClientRequest { client =>
-    val jpromise = client.url(url)
-      .sign(requestSigner)
-      .withFollowRedirects(follow = true)
-      .delete()
-    val result = Await.result(jpromise, requestTimeout)
+  def delete[T](url: String): RequestResponse[Boolean] = withClientRequest(url) { client =>
+    val response = client.postData("").method("delete").asString
 
-    val value = if (Seq(HTTPStatusCodes.OK, HTTPStatusCodes.CREATED, HTTPStatusCodes.NO_CONTENT).contains(result.status)) {
+    val value = if (Seq(HTTPStatusCodes.OK, HTTPStatusCodes.CREATED, HTTPStatusCodes.NO_CONTENT).contains(response.code)) {
       RequestResponse(Option(true))
     } else {
-      RequestResponse[Boolean](None, result.statusText, hasError = true)
+      RequestResponse[Boolean](None, response.statusLine, hasError = true)
     }
 
     value
   }
 
-  private def get(url: String): Either[ResponseError, JsValue] = withClientEither { client =>
-    val jpromise = client.url(url)
-      .sign(requestSigner)
-      .withFollowRedirects(follow = true)
-      .get()
-    val result = Await.result(jpromise, requestTimeout)
+  private def get(url: String): Either[ResponseError, JsValue] = withClientEither(url) { client =>
+    val response = client.asString
 
-    val value = if (Seq(HTTPStatusCodes.OK, HTTPStatusCodes.CREATED).contains(result.status)) {
-      val body = result.body
-      parseJson(body)
+    val value = if (Seq(HTTPStatusCodes.OK, HTTPStatusCodes.CREATED).contains(response.code)) {
+      parseJson(response.body)
     } else {
-      Left(ResponseError(java.util.UUID.randomUUID().toString, result.statusText, result.statusText))
+      Left(ResponseError(java.util.UUID.randomUUID().toString, response.statusLine, response.statusLine))
     }
 
     value
@@ -123,16 +98,16 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
     }.getOrElse(Right(json))
   }
 
-  private def withClientEither[T](block: NingWSClient => Either[ResponseError, T]): Either[ResponseError, T] = {
-    withClient(block) match {
+  private def withClientEither[T](url: String)(block: HttpRequest => Either[ResponseError, T]): Either[ResponseError, T] = {
+    withClient(url)(block) match {
       case Success(res) => res
       case Failure(error) =>
         Left(ResponseError("Request failed", getFullStackTrace(error), error.getMessage))
     }
   }
 
-  private def withClientRequest[T](block: NingWSClient => RequestResponse[T]): RequestResponse[T] = {
-    withClient(block) match {
+  private def withClientRequest[T](url: String)(block: HttpRequest => RequestResponse[T]): RequestResponse[T] = {
+    withClient(url)(block) match {
       case Success(res) => res
       case Failure(error) =>
         val statusMessage =
@@ -145,15 +120,9 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
     }
   }
 
-  private def withClient[T](block: NingWSClient => T): Try[T] = {
-    val config = new NingAsyncHttpClientConfigBuilder(DefaultWSClientConfig()).build()
-    val clientConfig = new AsyncHttpClientConfig.Builder(config)
-      .setExecutorService(new ThreadPoolExecutor(5, 15, 30L, TimeUnit.SECONDS, new SynchronousQueue[Runnable]))
-      .build()
-    val client = new NingWSClient(clientConfig)
-    val result = Try(block(client))
-    client.close()
-    result
+  private def withClient[T](url: String)(block: HttpRequest => T): Try[T] = {
+    val client = Http(url).oauth(KEY, TOKEN)
+    Try(block(client))
   }
 
   private def getFullStackTrace(throwableOpt: Throwable, accumulator: String = ""): String = {

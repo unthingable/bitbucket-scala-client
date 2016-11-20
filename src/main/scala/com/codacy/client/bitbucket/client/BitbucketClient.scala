@@ -1,19 +1,17 @@
 package com.codacy.client.bitbucket.client
 
-import java.util.concurrent.{SynchronousQueue, ThreadPoolExecutor, TimeUnit}
-
 import com.codacy.client.bitbucket.util.HTTPStatusCodes
-import com.ning.http.client.AsyncHttpClientConfig
 import play.api.http.{ContentTypeOf, Writeable}
 import play.api.libs.json.{JsValue, Json, Reads}
 import play.api.libs.oauth._
-import play.api.libs.ws.ning.{NingAsyncHttpClientConfigBuilder, NingWSClient}
+import play.api.libs.ws.WSClient
 
 import scala.concurrent.Await
 import scala.concurrent.duration.{Duration, SECONDS}
 import scala.util.{Failure, Properties, Success, Try}
 
-class BitbucketClient(key: String, secretKey: String, token: String, secretToken: String) {
+class BitbucketClient(key: String, secretKey: String, token: String, secretToken: String)
+                     (wsClient: WSClient){
 
   private lazy val KEY = ConsumerKey(key, secretKey)
   private lazy val TOKEN = RequestToken(token, secretToken)
@@ -139,7 +137,7 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
     }.getOrElse(Right(json))
   }
 
-  private def withClientEither[T](block: NingWSClient => Either[ResponseError, T]): Either[ResponseError, T] = {
+  private def withClientEither[T](block: WSClient => Either[ResponseError, T]): Either[ResponseError, T] = {
     withClient(block) match {
       case Success(res) => res
       case Failure(error) =>
@@ -147,7 +145,7 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
     }
   }
 
-  private def withClientRequest[T](block: NingWSClient => RequestResponse[T]): RequestResponse[T] = {
+  private def withClientRequest[T](block: WSClient => RequestResponse[T]): RequestResponse[T] = {
     withClient(block) match {
       case Success(res) => res
       case Failure(error) =>
@@ -161,20 +159,14 @@ class BitbucketClient(key: String, secretKey: String, token: String, secretToken
     }
   }
 
-  private def withClient[T](block: NingWSClient => T): Try[T] = {
-    val config = new NingAsyncHttpClientConfigBuilder().build()
-    val clientConfig = new AsyncHttpClientConfig.Builder(config)
-      .setExecutorService(new ThreadPoolExecutor(5, 15, 30L, TimeUnit.SECONDS, new SynchronousQueue[Runnable]))
-      .build()
-    val client = new NingWSClient(clientConfig)
-    val result = Try(block(client))
-    client.close()
+  private def withClient[T](block: WSClient => T): Try[T] = {
+    val result = Try(block(wsClient))
     result
   }
 
   private def getFullStackTrace(throwableOpt: Throwable, accumulator: String = ""): String = {
     Option(throwableOpt).map { throwable =>
-      val newAccumulator = s"$accumulator${Properties.lineSeparator}${throwable.getStackTraceString}"
+      val newAccumulator = s"$accumulator${Properties.lineSeparator}${throwable.getStackTrace.mkString(" ")}"
       getFullStackTrace(throwable.getCause, newAccumulator)
     }.getOrElse(accumulator)
   }
